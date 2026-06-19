@@ -3,8 +3,8 @@
 #include <thread>
 
 #include <opencv2/core.hpp>
-#include <opencv2/videoio.hpp>
 
+#include <hikcamera/capturer.hpp>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/node.hpp>
 #include <rclcpp/node_options.hpp>
@@ -12,10 +12,10 @@
 #include <rmcs_executor/component.hpp>
 #include <rmcs_utility/double_buffer.hpp>
 
-#include "rmcs_hero_lob/vision_data.hpp"
 #include "rmcs_hero_lob/background_remover.hpp"
-#include "rmcs_hero_lob/tracker_processor.hpp"
 #include "rmcs_hero_lob/image_synthesis.hpp"
+#include "rmcs_hero_lob/tracker_processor.hpp"
+#include "rmcs_hero_lob/vision_data.hpp"
 
 namespace rmcs_hero_lob {
 
@@ -26,14 +26,18 @@ public:
     VisionPipeline()
         : Node{
               get_component_name(),
-              rclcpp::NodeOptions{}.automatically_declare_parameters_from_overrides(true)},
-          background_remover_(config_.motion_foreground),
-          tracker_processor_(config_.trajectory_window),
-          image_synthesis_(config_.trajectory_window) {
-        camera_device_ = get_parameter("camera_device").as_int();
-        camera_width_ = get_parameter("camera_width").as_int();
-        camera_height_ = get_parameter("camera_height").as_int();
-        camera_fps_ = get_parameter("camera_fps").as_double();
+              rclcpp::NodeOptions{}.automatically_declare_parameters_from_overrides(true)}
+        , background_remover_(config_.motion_foreground)
+        , tracker_processor_(config_.trajectory_window)
+        , image_synthesis_(config_.trajectory_window) {
+        hikcamera::Config cam_config;
+        cam_config.exposure_us = get_parameter("exposure_us").as_double();
+        cam_config.framerate = get_parameter("framerate").as_double();
+        cam_config.gain = get_parameter("gain").as_double();
+        cam_config.invert_image = get_parameter("invert_image").as_bool();
+        camera_.configure(cam_config);
+
+        camera_fps_ = cam_config.framerate;
 
         if (has_parameter("min_brightness_value"))
             config_.motion_foreground.min_brightness_value =
@@ -48,8 +52,8 @@ public:
             config_.trajectory_window.vertical_motion_half_angle_degrees =
                 static_cast<float>(get_parameter("vertical_motion_half_angle_degrees").as_double());
         if (has_parameter("component_match_max_distance_pixels"))
-            config_.trajectory_window.component_match_max_distance_pixels =
-                static_cast<float>(get_parameter("component_match_max_distance_pixels").as_double());
+            config_.trajectory_window.component_match_max_distance_pixels = static_cast<float>(
+                get_parameter("component_match_max_distance_pixels").as_double());
 
         register_output(
             "/hero/lob/vision_target", vision_target_, VisionTarget{0.f, 0.f, false, 0});
@@ -91,23 +95,24 @@ public:
 
 private:
     void vision_thread_func() {
-        cv::VideoCapture cap(camera_device_);
-        if (!cap.isOpened()) {
-            RCLCPP_ERROR(get_logger(), "Failed to open camera device %d", camera_device_);
+        auto result = camera_.connect();
+        if (!result) {
+            RCLCPP_ERROR(get_logger(), "Failed to connect camera: %s", result.error().c_str());
             return;
         }
-
-        cap.set(cv::CAP_PROP_FRAME_WIDTH, camera_width_);
-        cap.set(cv::CAP_PROP_FRAME_HEIGHT, camera_height_);
-        cap.set(cv::CAP_PROP_FPS, camera_fps_);
+        RCLCPP_INFO(get_logger(), "Camera connected");
 
         uint64_t frame_id = 0;
         while (!stop_flag_.load(std::memory_order_relaxed)) {
-            cv::Mat frame;
-            if (!cap.read(frame))
+            auto image = camera_.read_image();
+            if (!image) {
+                RCLCPP_WARN_THROTTLE(
+                    get_logger(), *get_clock(), 1000, "Failed to read image: %s",
+                    image.error().c_str());
                 continue;
+            }
 
-            cv::Mat output = process_frame(frame);
+            cv::Mat output = process_frame(image.value());
 
             target_buffer_.write(VisionTarget{0.f, 0.f, false, frame_id});
 
@@ -123,6 +128,11 @@ private:
             ++frame_id;
         }
 
+        auto disconnect_result = camera_.disconnect();
+        if (!disconnect_result) {
+            RCLCPP_WARN(
+                get_logger(), "Failed to disconnect camera: %s", disconnect_result.error().c_str());
+        }
         RCLCPP_INFO(get_logger(), "Vision pipeline thread stopped");
     }
 
@@ -144,6 +154,8 @@ private:
         SynthesisResult synth = image_synthesis_.process(reference_frame_, traj);
         return synth.valid ? synth.output_image : frame;
     }
+
+    hikcamera::Camera camera_;
 
     HeroLobConfig config_;
     BackgroundRemover background_remover_;
@@ -171,9 +183,6 @@ private:
     std::thread vision_thread_;
     std::atomic<bool> stop_flag_{false};
 
-    int camera_device_;
-    int camera_width_;
-    int camera_height_;
     double camera_fps_;
 };
 
