@@ -27,12 +27,14 @@ find_package(rosidl_typesupport_cpp REQUIRED)
 find_package(pluginlib REQUIRED)
 
 find_package(rmcs_executor REQUIRED)
+find_package(rmcs_utility REQUIRED)
 find_package(rmcs_description REQUIRED)
 find_package(fast_tf REQUIRED)
 find_package(hikcamera REQUIRED)
 set(RMCS_MSGS_SOURCE_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/../rmcs_msgs/include")
 
 include_directories(
+  ${PROJECT_SOURCE_DIR}/include/
   ${PROJECT_SOURCE_DIR}/src/
   ${PROJECT_SOURCE_DIR}/test/
   ${RMCS_MSGS_SOURCE_INCLUDE_DIR}
@@ -41,6 +43,7 @@ include_directories(
   ${rclcpp_INCLUDE_DIRS}
   ${rmcs_msgs_INCLUDE_DIRS}
   ${rmcs_executor_INCLUDE_DIRS}
+  ${rmcs_utility_INCLUDE_DIRS}
   ${rmcs_description_INCLUDE_DIRS}
   ${fast_tf_INCLUDE_DIRS}
   ${hikcamera_INCLUDE_DIRS}
@@ -89,6 +92,7 @@ target_link_libraries(
   ${OpenVINO_LIBRARIES}
   ${Ceres_LIBRARIES}
   ${rmcs_executor_LIBRARIES}
+  ${rmcs_utility_LIBRARIES}
   ${rmcs_description_LIBRARIES}
   ${fast_tf_LIBRARIES}
   ${hikcamera_LIBRARIES}
@@ -99,6 +103,11 @@ install(
     ${PROJECT_NAME}
   DESTINATION 
     lib/
+)
+
+install(
+  DIRECTORY include/
+  DESTINATION include
 )
 
 pluginlib_export_plugin_description_file(
