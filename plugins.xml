@@ -1,0 +1,3 @@
+<library path="rmcs_hero_lob">
+  <class type="rmcs_hero_lob::Test" base_class_type="rmcs_executor::Component" />
+</library>
