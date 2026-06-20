@@ -30,19 +30,43 @@ int main() {
     if (id == 0) {
         return 1;
     }
+    assert(manager.slot_number_for(id) == 1);
 
     cv::Mat frame = ref.bgr.clone();
     frame.at<cv::Vec3b>(1, 1) = cv::Vec3b(255, 255, 255);
     manager.process_frame(ref, frame, 0.5);
+    auto progress = manager.collect_progress_updates(0.5);
+    assert(progress.empty());
     auto results = manager.collect_results(0.5);
     assert(results.empty());
+
+    progress = manager.collect_progress_updates(1.0);
+    assert(progress.size() == 1);
+    assert(progress.front().window_id == id);
+    assert(progress.front().slot_number == 1);
+    assert(progress.front().elapsed_seconds == 1);
+
+    progress = manager.collect_progress_updates(1.0);
+    assert(progress.empty());
 
     manager.process_frame(ref, frame, 1.0);
     results = manager.collect_results(1.0);
     assert(!results.empty());
     assert(results.front().window_id == id);
+    assert(results.front().slot_number == 1);
     assert(results.front().output_image.rows == 4);
     assert(results.front().output_image.cols == 4);
+
+    manager.cleanup(2.1);
+
+    auto next_id = manager.create_window(2.2);
+    assert(next_id != 0);
+    assert(next_id != id);
+    assert(manager.slot_number_for(next_id) == 1);
+
+    auto overlapping_id = manager.create_window(2.3);
+    assert(overlapping_id != 0);
+    assert(manager.slot_number_for(overlapping_id) == 2);
 
     return 0;
 }

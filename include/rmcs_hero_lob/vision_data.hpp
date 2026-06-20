@@ -66,21 +66,20 @@ struct VisionImageRef {
     uint64_t frame_id = 0;
 };
 
-struct WindowPublication {
-    bool valid = false;
-    uint64_t window_id = 0;
-    double start_time = 0.0;
-    double end_time = 0.0;
-    VisionTarget target = {};
-    VisionImageRef image_ref = {};
-};
-
 struct WindowResult {
     uint64_t window_id;
+    uint32_t slot_number = 0;
     TrajectoryResult trajectory;
     cv::Mat output_image;
     double start_time;
     double end_time;
+};
+
+struct WindowProgressUpdate {
+    uint64_t window_id = 0;
+    uint32_t slot_number = 0;
+    uint32_t elapsed_seconds = 0;
+    double total_duration_seconds = 0.0;
 };
 
 } // namespace rmcs_hero_lob

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
+#include <optional>
 
 #include <opencv2/core.hpp>
 
@@ -20,9 +22,10 @@ public:
         Consumed
     };
 
-    ProcessingWindow(WindowId id, double start_time, double duration,
+    ProcessingWindow(WindowId id, uint32_t slot_number, double start_time, double duration,
                      const TrajectoryWindowConfig& config)
         : id_(id)
+        , slot_number_(slot_number)
         , start_time_(start_time)
         , end_time_(start_time + duration)
         , state_(State::Accumulating)
@@ -54,6 +57,7 @@ public:
     }
 
     bool is_consumed() const { return state_ == State::Consumed; }
+    bool is_accumulating() const { return state_ == State::Accumulating; }
 
     const TrajectoryResult& result() const { return result_; }
     const FrameReference& reference_frame() const { return reference_frame_; }
@@ -65,12 +69,34 @@ public:
     }
 
     WindowId id() const { return id_; }
+    uint32_t slot_number() const { return slot_number_; }
     State state() const { return state_; }
     double start_time() const { return start_time_; }
     double end_time() const { return end_time_; }
+    double duration() const { return end_time_ - start_time_; }
+
+    std::optional<uint32_t> take_progress_second(double current_time) {
+        if (state_ != State::Accumulating) {
+            return std::nullopt;
+        }
+
+        double elapsed = current_time - start_time_;
+        if (elapsed < 1.0) {
+            return std::nullopt;
+        }
+
+        auto elapsed_seconds = static_cast<uint32_t>(std::floor(elapsed));
+        if (elapsed_seconds == 0 || elapsed_seconds == last_logged_elapsed_second_) {
+            return std::nullopt;
+        }
+
+        last_logged_elapsed_second_ = elapsed_seconds;
+        return elapsed_seconds;
+    }
 
 private:
     WindowId id_;
+    uint32_t slot_number_;
     double start_time_;
     double end_time_;
     State state_;
@@ -79,6 +105,7 @@ private:
     FrameReference reference_frame_;
     bool reference_set_ = false;
     TrajectoryResult result_;
+    uint32_t last_logged_elapsed_second_ = 0;
 };
 
 } // namespace rmcs_hero_lob

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -33,8 +34,9 @@ public:
         }
 
         WindowId id = ++next_id_;
+        const uint32_t slot_number = allocate_slot_locked();
         windows_[id] = std::make_unique<ProcessingWindow>(
-            id, current_time, window_duration_, trajectory_config_);
+            id, slot_number, current_time, window_duration_, trajectory_config_);
         return id;
     }
 
@@ -44,6 +46,26 @@ public:
             (void)id;
             window->process(ref, frame, background_remover_, current_time);
         }
+    }
+
+    std::vector<WindowProgressUpdate> collect_progress_updates(double current_time) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<WindowProgressUpdate> updates;
+        for (auto& [id, window] : windows_) {
+            (void)id;
+            auto elapsed_seconds = window->take_progress_second(current_time);
+            if (!elapsed_seconds.has_value()) {
+                continue;
+            }
+
+            updates.push_back(WindowProgressUpdate{
+                .window_id = window->id(),
+                .slot_number = window->slot_number(),
+                .elapsed_seconds = *elapsed_seconds,
+                .total_duration_seconds = window->duration(),
+            });
+        }
+        return updates;
     }
 
     std::vector<WindowResult> collect_results(double current_time) {
@@ -56,6 +78,7 @@ public:
 
             WindowResult result;
             result.window_id = window->id();
+            result.slot_number = window->slot_number();
             result.trajectory = window->result();
             result.start_time = window->start_time();
             result.end_time = window->end_time();
@@ -68,6 +91,15 @@ public:
             window->consume();
         }
         return results;
+    }
+
+    uint32_t slot_number_for(WindowId id) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = windows_.find(id);
+        if (it == windows_.end()) {
+            return 0;
+        }
+        return it->second->slot_number();
     }
 
     void cleanup(double current_time, double grace_period = 1.0) {
@@ -93,6 +125,24 @@ public:
     }
 
 private:
+    uint32_t allocate_slot_locked() const {
+        std::vector<bool> used_slots(max_windows_ + 1, false);
+        for (const auto& [id, window] : windows_) {
+            (void)id;
+            if (!window->is_consumed()) {
+                used_slots[window->slot_number()] = true;
+            }
+        }
+
+        for (uint32_t slot = 1; slot <= max_windows_; ++slot) {
+            if (!used_slots[slot]) {
+                return slot;
+            }
+        }
+
+        return 0;
+    }
+
     size_t active_count_locked() const {
         size_t count = 0;
         for (const auto& [id, window] : windows_) {
