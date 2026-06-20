@@ -11,7 +11,7 @@ class BackgroundRemover {
 public:
     explicit BackgroundRemover(const MotionForegroundConfig& config) : config_(config) {}
 
-    ForegroundResult process(const FrameReference& reference, const cv::Mat& frame) {
+    ForegroundResult process(const FrameReference& reference, const cv::Mat& frame) const {
         ForegroundResult result;
         if (!reference.valid || frame.empty()) {
             return result;

@@ -26,6 +26,12 @@ struct HeroLobConfig {
     TrajectoryWindowConfig trajectory_window = {};
 };
 
+struct WindowConfig {
+    double duration_seconds = 3.0;
+    uint32_t max_active_windows = 4;
+    TrajectoryWindowConfig trajectory_window = {};
+};
+
 struct FrameReference {
     cv::Mat bgr;
     bool valid = false;
@@ -49,15 +55,32 @@ struct SynthesisResult {
 };
 
 struct VisionTarget {
-    float x;
-    float y;
-    bool found;
-    uint64_t frame_id;
+    float x = 0.f;
+    float y = 0.f;
+    bool found = false;
+    uint64_t frame_id = 0;
 };
 
 struct VisionImageRef {
-    const cv::Mat* image;
-    uint64_t frame_id;
+    const cv::Mat* image = nullptr;
+    uint64_t frame_id = 0;
+};
+
+struct WindowPublication {
+    bool valid = false;
+    uint64_t window_id = 0;
+    double start_time = 0.0;
+    double end_time = 0.0;
+    VisionTarget target = {};
+    VisionImageRef image_ref = {};
+};
+
+struct WindowResult {
+    uint64_t window_id;
+    TrajectoryResult trajectory;
+    cv::Mat output_image;
+    double start_time;
+    double end_time;
 };
 
 } // namespace rmcs_hero_lob

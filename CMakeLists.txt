@@ -57,8 +57,6 @@ file(GLOB_RECURSE PROJECT_SOURCE
   CONFIGURE_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/*.cpp
   ${PROJECT_SOURCE_DIR}/src/*.cc
-  ${PROJECT_SOURCE_DIR}/test/*.cpp
-  ${PROJECT_SOURCE_DIR}/test/*.cc
 )
 
 add_library(
