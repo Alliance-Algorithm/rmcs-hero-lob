@@ -34,6 +34,7 @@ struct WindowConfig {
 
 struct FrameReference {
     cv::Mat bgr;
+    mutable cv::Mat ref_gray;
     bool valid = false;
 };
 

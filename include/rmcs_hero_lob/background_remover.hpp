@@ -16,18 +16,27 @@ public:
         if (!reference.valid || frame.empty()) {
             return result;
         }
-        cv::Mat ref_gray, cur_gray;
-        cv::cvtColor(reference.bgr, ref_gray, cv::COLOR_BGR2GRAY);
+
+        if (reference.ref_gray.empty()) {
+            cv::cvtColor(reference.bgr, reference.ref_gray, cv::COLOR_BGR2GRAY);
+        }
+
+        cv::Mat cur_gray;
         cv::cvtColor(frame, cur_gray, cv::COLOR_BGR2GRAY);
+
         cv::Mat diff;
-        cv::absdiff(ref_gray, cur_gray, diff);
+        cv::absdiff(reference.ref_gray, cur_gray, diff);
+
         cv::Mat bright_mask;
-        cv::threshold(cur_gray, bright_mask, config_.min_brightness_value, 255,
-                      cv::THRESH_BINARY);
+        cv::threshold(
+            cur_gray, bright_mask, config_.min_brightness_value, 255, cv::THRESH_BINARY);
+
         cv::Mat diff_mask;
         cv::threshold(diff, diff_mask, config_.min_diff_value, 255, cv::THRESH_BINARY);
+
         cv::Mat candidate_mask;
         cv::bitwise_and(diff_mask, bright_mask, candidate_mask);
+
         if (config_.open_kernel_size > 0) {
             cv::Mat kernel = cv::getStructuringElement(
                 cv::MORPH_ELLIPSE,
@@ -40,6 +49,7 @@ public:
                 cv::Size(config_.close_kernel_size, config_.close_kernel_size));
             cv::morphologyEx(candidate_mask, candidate_mask, cv::MORPH_CLOSE, kernel);
         }
+
         result.valid = true;
         result.candidate_mask = candidate_mask;
         result.candidate_bgr = frame;

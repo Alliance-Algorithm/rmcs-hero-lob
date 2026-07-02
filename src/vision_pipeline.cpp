@@ -1,4 +1,5 @@
 #include <atomic>
+#include <chrono>
 #include <cinttypes>
 #include <memory>
 #include <opencv2/core/mat.hpp>
@@ -6,7 +7,6 @@
 
 #include <opencv2/core.hpp>
 
-#include <hikcamera/capturer.hpp>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/node.hpp>
 #include <rclcpp/node_options.hpp>
@@ -27,15 +27,6 @@ public:
         : Node{
               get_component_name(),
               rclcpp::NodeOptions{}.automatically_declare_parameters_from_overrides(true)} {
-        hikcamera::Config cam_config;
-        cam_config.exposure_us = get_parameter("exposure_us").as_double();
-        cam_config.framerate = get_parameter("framerate").as_double();
-        cam_config.gain = get_parameter("gain").as_double();
-        cam_config.invert_image = get_parameter("invert_image").as_bool();
-        camera_.configure(cam_config);
-
-        camera_fps_ = cam_config.framerate;
-
         if (has_parameter("min_brightness_value"))
             config_.motion_foreground.min_brightness_value =
                 static_cast<int>(get_parameter("min_brightness_value").as_int());
@@ -68,6 +59,7 @@ public:
                 trigger_count_.fetch_add(1, std::memory_order_release);
             });
 
+        register_input(get_parameter("input_name").as_string(), frame_input_);
         register_output("/hero/lob/latest_frame", latest_frame_);
         register_output("/hero/lob/processed_image", processed_image_, VisionImageRef{nullptr, 0});
     }
@@ -81,7 +73,7 @@ public:
 
     void before_updating() override {
         vision_thread_ = std::thread(&VisionPipeline::vision_thread_func, this);
-        RCLCPP_INFO(get_logger(), "Vision pipeline thread started (target ~%.0f Hz)", camera_fps_);
+        RCLCPP_INFO(get_logger(), "Vision pipeline thread started");
     }
 
     void update() override {
@@ -93,32 +85,27 @@ public:
 
 private:
     void vision_thread_func() {
-        auto result = camera_.connect();
-        if (!result) {
-            RCLCPP_ERROR(get_logger(), "Failed to connect camera: %s", result.error().c_str());
-            return;
-        }
-        RCLCPP_INFO(get_logger(), "Camera connected");
+        auto start_time = std::chrono::steady_clock::now();
 
-        uint64_t frame_id = 0;
         while (!stop_flag_.load(std::memory_order_relaxed)) {
-            auto image = camera_.read_image();
-            if (!image) {
-                RCLCPP_WARN_THROTTLE(
-                    get_logger(), *get_clock(), 1000, "Failed to read image: %s",
-                    image.error().c_str());
+            if (!frame_input_.ready() || frame_input_->image == nullptr) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 continue;
             }
+
+            cv::Mat frame = frame_input_->image->clone();
+            uint64_t frame_id = frame_input_->frame_id;
 
             if (!reference_frame_.valid) {
-                reference_frame_.bgr = image.value().clone();
+                reference_frame_.bgr = frame.clone();
                 reference_frame_.valid = true;
-                *latest_frame_ = image.value();
-                ++frame_id;
+                *latest_frame_ = frame;
                 continue;
             }
 
-            double timestamp = static_cast<double>(frame_id) / camera_fps_;
+            auto now = std::chrono::steady_clock::now();
+            double timestamp =
+                std::chrono::duration<double>(now - start_time).count();
 
             while (trigger_count_.load(std::memory_order_acquire) > 0) {
                 uint32_t expected = trigger_count_.load(std::memory_order_acquire);
@@ -143,8 +130,8 @@ private:
                 }
             }
 
-            window_manager_->process_frame(reference_frame_, image.value(), timestamp);
-            *latest_frame_ = image.value();
+            window_manager_->process_frame(reference_frame_, frame, timestamp);
+            *latest_frame_ = frame;
 
             auto progress_updates = window_manager_->collect_progress_updates(timestamp);
             for (const auto& update : progress_updates) {
@@ -176,19 +163,10 @@ private:
             }
 
             window_manager_->cleanup(timestamp);
-
-            ++frame_id;
         }
 
-        auto disconnect_result = camera_.disconnect();
-        if (!disconnect_result) {
-            RCLCPP_WARN(
-                get_logger(), "Failed to disconnect camera: %s", disconnect_result.error().c_str());
-        }
         RCLCPP_INFO(get_logger(), "Vision pipeline thread stopped");
     }
-
-    hikcamera::Camera camera_;
 
     HeroLobConfig config_;
     double window_duration_ = 3.0;
@@ -199,6 +177,7 @@ private:
     rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr trigger_sub_;
     std::atomic<uint32_t> trigger_count_{0};
 
+    InputInterface<VisionImageRef> frame_input_;
     OutputInterface<cv::Mat> latest_frame_;
     OutputInterface<VisionImageRef> processed_image_;
     cv::Mat processed_image_buffer_;
@@ -207,8 +186,6 @@ private:
 
     std::thread vision_thread_;
     std::atomic<bool> stop_flag_{false};
-
-    double camera_fps_ = 0.0;
 };
 
 } // namespace rmcs_hero_lob
