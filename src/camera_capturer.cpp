@@ -1,4 +1,6 @@
 #include <atomic>
+#include <chrono>
+#include <cinttypes>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -12,8 +14,6 @@
 
 #include <rmcs_executor/component.hpp>
 
-#include "rmcs_hero_lob/vision_data.hpp"
-
 namespace rmcs_hero_lob {
 
 class CameraCapture
@@ -24,19 +24,12 @@ public:
         : Node{
               get_component_name(),
               rclcpp::NodeOptions{}.automatically_declare_parameters_from_overrides(true)} {
-        hikcamera::Config cam_config;
-        cam_config.exposure_us = get_parameter("exposure_us").as_double();
-        cam_config.framerate = get_parameter("framerate").as_double();
-        cam_config.gain = get_parameter("gain").as_double();
-        cam_config.invert_image = get_parameter("invert_image").as_bool();
-        camera_.configure(cam_config);
 
-        camera_fps_ = cam_config.framerate;
+        config_.exposure_us = static_cast<float>(get_parameter("exposure_us").as_double());
+        config_.framerate = static_cast<float>(get_parameter("framerate").as_double());
+        config_.invert_image = get_parameter("invert_image").as_bool();
 
-        if (has_parameter("output_name"))
-            output_name_ = get_parameter("output_name").as_string();
-
-        register_output(output_name_, frame_output_);
+        camera_.configure(config_);
     }
 
     ~CameraCapture() override {
@@ -49,10 +42,23 @@ public:
     void before_updating() override {
         stop_flag_.store(false, std::memory_order_relaxed);
         capture_thread_ = std::thread(&CameraCapture::capture_thread_func, this);
-        RCLCPP_INFO(get_logger(), "Camera capture thread started (target ~%.0f Hz)", camera_fps_);
+        RCLCPP_INFO(
+            get_logger(), "Camera capture thread started (target ~%.0f Hz)", config_.framerate);
     }
 
     void update() override {}
+
+    [[nodiscard]] bool has_frame() const {
+        std::lock_guard<std::mutex> lock(frame_mutex_);
+        return frame_available_;
+    }
+
+    [[nodiscard]] cv::Mat get_latest_frame() const {
+        std::lock_guard<std::mutex> lock(frame_mutex_);
+        if (!frame_available_)
+            return {};
+        return latest_frame_.clone();
+    }
 
 private:
     void capture_thread_func() {
@@ -61,11 +67,17 @@ private:
             RCLCPP_ERROR(get_logger(), "Failed to connect camera: %s", result.error().c_str());
             return;
         }
-        RCLCPP_INFO(get_logger(), "Camera connected");
 
+        RCLCPP_INFO(get_logger(), "Camera connected");
         uint64_t frame_id = 0;
+
+        using clock = std::chrono::steady_clock;
+        auto fps_last_time = clock::now();
+        uint64_t fps_frame_count = 0;
+
         while (!stop_flag_.load(std::memory_order_relaxed)) {
             auto image = camera_.read_image();
+
             if (!image) {
                 RCLCPP_WARN_THROTTLE(
                     get_logger(), *get_clock(), 1000, "Failed to read image: %s",
@@ -74,14 +86,22 @@ private:
             }
 
             {
-                std::lock_guard<std::mutex> lock(buffer_mutex_);
-                buffers_[write_idx_].frame = image.value().clone();
-                buffers_[write_idx_].frame_id = frame_id;
-                buffers_[write_idx_].valid = true;
+                std::lock_guard<std::mutex> lock(frame_mutex_);
+                latest_frame_ = image->clone();
+                frame_available_ = true;
             }
-            write_idx_.store(1 - write_idx_.load(std::memory_order_relaxed), std::memory_order_release);
 
             ++frame_id;
+            ++fps_frame_count;
+
+            auto now = clock::now();
+            auto elapsed = std::chrono::duration<double>(now - fps_last_time).count();
+            if (elapsed >= 0.2) {
+                double actual_fps = static_cast<double>(fps_frame_count) / elapsed;
+                RCLCPP_INFO(get_logger(), "Camera FPS: %.1f Hz", actual_fps);
+                fps_last_time = now;
+                fps_frame_count = 0;
+            }
         }
 
         auto disconnect_result = camera_.disconnect();
@@ -89,27 +109,20 @@ private:
             RCLCPP_WARN(
                 get_logger(), "Failed to disconnect camera: %s", disconnect_result.error().c_str());
         }
-        RCLCPP_INFO(get_logger(), "Camera capture thread stopped");
+
+        RCLCPP_INFO(
+            get_logger(), "Camera capture thread stopped (%" PRIu64 " frames captured)", frame_id);
     }
 
+    hikcamera::Config config_;
     hikcamera::Camera camera_;
-    double camera_fps_ = 0.0;
-
-    struct FrameBuffer {
-        cv::Mat frame;
-        uint64_t frame_id = 0;
-        bool valid = false;
-    };
-
-    FrameBuffer buffers_[2];
-    std::atomic<int> write_idx_{0};
-    mutable std::mutex buffer_mutex_;
-
-    std::string output_name_ = "/camera_capture/latest_frame";
-    OutputInterface<VisionImageRef> frame_output_;
 
     std::thread capture_thread_;
     std::atomic<bool> stop_flag_{false};
+
+    mutable std::mutex frame_mutex_;
+    cv::Mat latest_frame_;
+    bool frame_available_ = false;
 };
 
 } // namespace rmcs_hero_lob

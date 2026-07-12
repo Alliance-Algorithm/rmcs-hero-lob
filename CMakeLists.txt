@@ -31,6 +31,7 @@ find_package(rmcs_utility REQUIRED)
 find_package(rmcs_description REQUIRED)
 find_package(fast_tf REQUIRED)
 find_package(hikcamera REQUIRED)
+
 set(RMCS_MSGS_SOURCE_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/../rmcs_msgs/include")
 
 include_directories(
