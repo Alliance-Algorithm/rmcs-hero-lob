@@ -1,7 +1,9 @@
+#include "rmcs_hero_lob/msgs/camera_frame.hpp"
 #include <atomic>
 #include <chrono>
 #include <cinttypes>
 #include <mutex>
+#include <opencv2/core/mat.hpp>
 #include <string>
 #include <thread>
 
@@ -21,15 +23,16 @@ class CameraCapture
     , public rclcpp::Node {
 public:
     CameraCapture()
-        : Node{
-              get_component_name(),
-              rclcpp::NodeOptions{}.automatically_declare_parameters_from_overrides(true)} {
+        : Node{get_component_name(), rclcpp::NodeOptions{}.automatically_declare_parameters_from_overrides(true)} {
 
         config_.exposure_us = static_cast<float>(get_parameter("exposure_us").as_double());
         config_.framerate = static_cast<float>(get_parameter("framerate").as_double());
         config_.invert_image = get_parameter("invert_image").as_bool();
 
         camera_.configure(config_);
+
+        register_output("/hero_lob/camera_frame", camera_frame_, msgs::CameraFrame{});
+        register_output("/hero_lob/camera_image", camera_image_, cv::Mat());
     }
 
     ~CameraCapture() override {
@@ -42,22 +45,17 @@ public:
     void before_updating() override {
         stop_flag_.store(false, std::memory_order_relaxed);
         capture_thread_ = std::thread(&CameraCapture::capture_thread_func, this);
-        RCLCPP_INFO(
-            get_logger(), "Camera capture thread started (target ~%.0f Hz)", config_.framerate);
+        RCLCPP_INFO(get_logger(), "Camera capture thread started (target ~%.0f Hz)", config_.framerate);
     }
 
-    void update() override {}
-
-    [[nodiscard]] bool has_frame() const {
-        std::lock_guard<std::mutex> lock(frame_mutex_);
-        return frame_available_;
-    }
-
-    [[nodiscard]] cv::Mat get_latest_frame() const {
+    void update() override {
         std::lock_guard<std::mutex> lock(frame_mutex_);
         if (!frame_available_)
-            return {};
-        return latest_frame_.clone();
+            return;
+
+        *camera_image_ = latest_frame_;
+        camera_frame_->image = latest_frame_;
+        camera_frame_->frame_id = latest_frame_id_;
     }
 
 private:
@@ -80,23 +78,23 @@ private:
 
             if (!image) {
                 RCLCPP_WARN_THROTTLE(
-                    get_logger(), *get_clock(), 1000, "Failed to read image: %s",
-                    image.error().c_str());
+                    get_logger(), *get_clock(), 1000, "Failed to read image: %s", image.error().c_str());
                 continue;
             }
 
             {
                 std::lock_guard<std::mutex> lock(frame_mutex_);
+                ++frame_id;
                 latest_frame_ = image->clone();
+                latest_frame_id_ = frame_id;
                 frame_available_ = true;
             }
 
-            ++frame_id;
             ++fps_frame_count;
 
             auto now = clock::now();
             auto elapsed = std::chrono::duration<double>(now - fps_last_time).count();
-            if (elapsed >= 0.2) {
+            if (elapsed >= 1.0) {
                 double actual_fps = static_cast<double>(fps_frame_count) / elapsed;
                 RCLCPP_INFO(get_logger(), "Camera FPS: %.1f Hz", actual_fps);
                 fps_last_time = now;
@@ -106,12 +104,10 @@ private:
 
         auto disconnect_result = camera_.disconnect();
         if (!disconnect_result) {
-            RCLCPP_WARN(
-                get_logger(), "Failed to disconnect camera: %s", disconnect_result.error().c_str());
+            RCLCPP_WARN(get_logger(), "Failed to disconnect camera: %s", disconnect_result.error().c_str());
         }
 
-        RCLCPP_INFO(
-            get_logger(), "Camera capture thread stopped (%" PRIu64 " frames captured)", frame_id);
+        RCLCPP_INFO(get_logger(), "Camera capture thread stopped (%" PRIu64 " frames captured)", frame_id);
     }
 
     hikcamera::Config config_;
@@ -122,7 +118,11 @@ private:
 
     mutable std::mutex frame_mutex_;
     cv::Mat latest_frame_;
+    uint64_t latest_frame_id_ = 0;
     bool frame_available_ = false;
+
+    OutputInterface<msgs::CameraFrame> camera_frame_;
+    OutputInterface<cv::Mat> camera_image_;
 };
 
 } // namespace rmcs_hero_lob
