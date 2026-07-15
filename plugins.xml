@@ -1,4 +1,7 @@
 <library path="rmcs_hero_lob">
   <class type="rmcs_hero_lob::CameraCapture" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_hero_lob::ImageBroadcast" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_hero_lob::LobVisionCore" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_hero_lob::VideoRecorder" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_hero_lob::ShootSignal" base_class_type="rmcs_executor::Component" />
 </library>

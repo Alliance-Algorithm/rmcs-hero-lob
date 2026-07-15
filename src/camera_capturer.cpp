@@ -1,4 +1,4 @@
-#include "rmcs_hero_lob/msgs/camera_frame.hpp"
+#include "rmcs_hero_lob/configs.hpp"
 #include <atomic>
 #include <chrono>
 #include <cinttypes>
@@ -31,7 +31,7 @@ public:
 
         camera_.configure(config_);
 
-        register_output("/hero_lob/camera_frame", camera_frame_, msgs::CameraFrame{});
+        register_output("/hero_lob/camera_frame", camera_frame_, CameraFrame{});
         register_output("/hero_lob/camera_image", camera_image_, cv::Mat());
     }
 
@@ -54,8 +54,13 @@ public:
             return;
 
         *camera_image_ = latest_frame_;
-        camera_frame_->image = latest_frame_;
-        camera_frame_->frame_id = latest_frame_id_;
+
+        CameraFrame camera_frame;
+
+        camera_frame.frame_id = latest_frame_id_;
+        camera_frame.image = latest_frame_.clone();
+
+        *camera_frame_ = camera_frame;
     }
 
 private:
@@ -121,7 +126,7 @@ private:
     uint64_t latest_frame_id_ = 0;
     bool frame_available_ = false;
 
-    OutputInterface<msgs::CameraFrame> camera_frame_;
+    OutputInterface<CameraFrame> camera_frame_;
     OutputInterface<cv::Mat> camera_image_;
 };
 
