@@ -31,11 +31,13 @@ find_package(rmcs_utility REQUIRED)
 find_package(rmcs_description REQUIRED)
 find_package(fast_tf REQUIRED)
 find_package(hikcamera REQUIRED)
+
 set(RMCS_MSGS_SOURCE_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/../rmcs_msgs/include")
 
 include_directories(
   ${PROJECT_SOURCE_DIR}/include/
   ${PROJECT_SOURCE_DIR}/src/
+  ${PROJECT_SOURCE_DIR}/tool/
   ${PROJECT_SOURCE_DIR}/test/
   ${RMCS_MSGS_SOURCE_INCLUDE_DIR}
   ${EIGEN3_INCLUDE_DIRS}
@@ -57,6 +59,8 @@ file(GLOB_RECURSE PROJECT_SOURCE
   CONFIGURE_DEPENDS
   ${PROJECT_SOURCE_DIR}/src/*.cpp
   ${PROJECT_SOURCE_DIR}/src/*.cc
+  ${PROJECT_SOURCE_DIR}/tool/*.cpp
+  ${PROJECT_SOURCE_DIR}/tool/*.cc
 )
 
 add_library(
