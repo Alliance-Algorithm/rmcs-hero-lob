@@ -14,6 +14,9 @@ public:
     void StartTrigger(double trigger_start_time_seconds);
     void Reset();
 
+    void SetReference(const cv::Mat& bgr, int64_t frame_index);
+    ReferenceFrameResult GetReference() const;
+
 private:
     void TrimWindow(double current_timestamp_seconds);
 
