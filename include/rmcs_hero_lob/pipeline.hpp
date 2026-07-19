@@ -53,10 +53,7 @@ public:
             for (int c = 0; c < channels; ++c) {
                 for (int f = 0; f < count; ++f)
                     channel_values[f] = buffer[f * pixels * channels + i * channels + c];
-                std::nth_element(
-                    channel_values.begin(),
-                    channel_values.begin() + count / 2,
-                    channel_values.end());
+                std::nth_element(channel_values.begin(), channel_values.begin() + count / 2, channel_values.end());
                 result_data[i * channels + c] = channel_values[count / 2];
             }
         }
@@ -87,17 +84,21 @@ public:
         return compression_.Process(synthesis);
     }
 
-    void ResetTracker() {
-        tracker_processor_fast_.Reset();
+    void ResetTracker() { tracker_processor_fast_.Reset(); }
+
+    cv::Mat CompressImage(const cv::Mat& image) const {
+        if (image.empty())
+            return {};
+        cv::Mat result;
+        cv::resize(
+            image, result, cv::Size(config_.compression.output_width, config_.compression.output_height), 0, 0,
+            cv::INTER_AREA);
+        return result;
     }
 
-    ReferenceFrameSelector& GetReferenceFrameSelector() {
-        return reference_frame_selector_;
-    }
+    ReferenceFrameSelector& GetReferenceFrameSelector() { return reference_frame_selector_; }
 
-    TrackerProcessorFast& GetTracker() {
-        return tracker_processor_fast_;
-    }
+    TrackerProcessorFast& GetTracker() { return tracker_processor_fast_; }
 
 private:
     PipelineConfig config_;

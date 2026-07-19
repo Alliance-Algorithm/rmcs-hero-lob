@@ -79,7 +79,7 @@ public:
             config_.framerate, record_topic_.c_str(), pre_count_, post_count_);
     }
 
-    void update() override { }
+    void update() override {}
 
 private:
     enum class ItemKind { Open, Frame, Close };
@@ -208,9 +208,7 @@ private:
             Item item;
             {
                 std::unique_lock<std::mutex> lock(queue_mutex_);
-                queue_cv_.wait(lock, [this] {
-                    return !queue_.empty() || stop_flag_.load(std::memory_order_relaxed);
-                });
+                queue_cv_.wait(lock, [this] { return !queue_.empty() || stop_flag_.load(std::memory_order_relaxed); });
 
                 if (queue_.empty()) {
                     if (stop_flag_.load(std::memory_order_relaxed))
@@ -244,8 +242,7 @@ private:
             case ItemKind::Close:
                 if (writer.isOpened()) {
                     writer.release();
-                    RCLCPP_INFO(
-                        get_logger(), "Recording finished (%" PRIu64 " frames written)", recorded_frames);
+                    RCLCPP_INFO(get_logger(), "Recording finished (%" PRIu64 " frames written)", recorded_frames);
                 }
                 writer_busy_.store(false, std::memory_order_relaxed);
                 break;

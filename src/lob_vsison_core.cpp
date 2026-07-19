@@ -57,9 +57,10 @@ public:
             frame_cv_.notify_one();
         }
 
-        if (!last_bullet_status_ && *bullet_fired_) {
+        if (!last_bullet_status_ && *bullet_fired_ && !processing_active_.load(std::memory_order_relaxed)) {
             trigger_pending_.store(true, std::memory_order_relaxed);
             trigger_time_ = std::chrono::steady_clock::now();
+            RCLCPP_INFO(get_logger(), "--------S-H-O-O-T-I-N-G--------");
             RCLCPP_INFO(get_logger(), "bullet_fired trigger detected");
         }
         last_bullet_status_ = *bullet_fired_;
@@ -99,16 +100,17 @@ private:
                 frame_queue_.pop_front();
             }
 
+            ++history_sample_counter;
+            if (history_sample_counter % config_.history_sample_interval == 0) {
+                history_queue.push_back(frame_data.image.clone());
+                if (static_cast<int>(history_queue.size()) > config_.history_queue_max_size)
+                    history_queue.erase(history_queue.begin());
+            }
+
             switch (state) {
             case State::IDLE: {
-                ++history_sample_counter;
-                if (history_sample_counter % config_.history_sample_interval == 0) {
-                    history_queue.push_back(frame_data.image.clone());
-                    if (static_cast<int>(history_queue.size()) > config_.history_queue_max_size)
-                        history_queue.erase(history_queue.begin());
-                }
-
                 if (trigger_pending_.exchange(false, std::memory_order_relaxed)) {
+                    processing_active_.store(true, std::memory_order_relaxed);
                     if (!history_queue.empty()) {
                         pipeline_.SetReferenceFromHistory(history_queue, static_cast<int64_t>(frame_data.frame_id));
                         pipeline_.ResetTracker();
@@ -116,7 +118,8 @@ private:
                             std::chrono::duration<double>(std::chrono::steady_clock::now() - trigger_time_).count();
                         RCLCPP_INFO(
                             get_logger(),
-                            "background ready (%.3fs from trigger), %zu history frames, transition to WAITING",
+                            "background ready (%.3fs from trigger), %zu history frames, transition "
+                            "to WAITING",
                             bg_elapsed, history_queue.size());
                     }
                     frame_counter = 0;
@@ -161,9 +164,11 @@ private:
 
             case State::SYNTHESIZING: {
                 ReferenceFrameResult ref = pipeline_.GetReferenceFrameSelector().GetReference();
+                cv::Mat background_compressed;
                 if (ref.has_reference) {
+                    background_compressed = pipeline_.CompressImage(ref.reference_frame.bgr);
                     std::lock_guard<std::mutex> lock(output_mutex_);
-                    output_background_ = ref.reference_frame.bgr;
+                    output_background_ = background_compressed;
                 }
 
                 CompressionResult result = pipeline_.Finalize();
@@ -174,16 +179,23 @@ private:
 
                 auto total_elapsed =
                     std::chrono::duration<double>(std::chrono::steady_clock::now() - trigger_time_).count();
+                size_t background_bytes = background_compressed.total() * background_compressed.elemSize();
+                size_t track_bytes = output_track_.total() * output_track_.elemSize();
+                size_t output_bytes = result.valid ? result.output_image.total() * result.output_image.elemSize() : 0;
                 RCLCPP_INFO(
-                    get_logger(), "SYNTHESIZING -> DONE, output ready (%.3fs from trigger, %dx%d)", total_elapsed,
-                    result.output_image.cols, result.output_image.rows);
+                    get_logger(),
+                    "output ready (%.3fs from trigger) | background: %dx%d %zubytes | track: %dx%d "
+                    "%zubytes | "
+                    "output: %dx%d %zubytes",
+                    total_elapsed, background_compressed.cols, background_compressed.rows, background_bytes,
+                    output_track_.cols, output_track_.rows, track_bytes, result.output_image.cols,
+                    result.output_image.rows, output_bytes);
                 state = State::DONE;
                 break;
             }
 
             case State::DONE:
-                history_sample_counter = 0;
-                history_queue.clear();
+                processing_active_.store(false, std::memory_order_relaxed);
                 state = State::IDLE;
                 RCLCPP_INFO(get_logger(), "DONE -> IDLE, ready for next trigger");
                 break;
@@ -206,6 +218,7 @@ private:
     std::thread worker_thread_;
     std::atomic<bool> stop_flag_{false};
     std::atomic<bool> trigger_pending_{false};
+    std::atomic<bool> processing_active_{false};
     bool last_bullet_status_ = false;
     uint64_t last_frame_id_ = 0;
     std::chrono::steady_clock::time_point trigger_time_;
