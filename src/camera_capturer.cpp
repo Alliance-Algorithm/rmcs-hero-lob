@@ -45,7 +45,7 @@ public:
     void before_updating() override {
         stop_flag_.store(false, std::memory_order_relaxed);
         capture_thread_ = std::thread(&CameraCapture::capture_thread_func, this);
-        RCLCPP_INFO(get_logger(), "Camera capture thread started (target ~%.0f Hz)", config_.framerate);
+        // RCLCPP_INFO(get_logger(), "Camera capture thread started (target ~%.0f Hz)", config_.framerate);
     }
 
     void update() override {
@@ -101,7 +101,7 @@ private:
             auto elapsed = std::chrono::duration<double>(now - fps_last_time).count();
             if (elapsed >= 1.0) {
                 double actual_fps = static_cast<double>(fps_frame_count) / elapsed;
-                RCLCPP_INFO(get_logger(), "Camera FPS: %.1f Hz", actual_fps);
+                // RCLCPP_INFO(get_logger(), "Camera FPS: %.1f Hz", actual_fps);
                 fps_last_time = now;
                 fps_frame_count = 0;
             }

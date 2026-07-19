@@ -6,6 +6,7 @@
 
 #include <cv_bridge/cv_bridge.hpp>
 #include <opencv2/core/mat.hpp>
+#include <opencv2/imgproc.hpp>
 #include <rclcpp/node.hpp>
 #include <rclcpp/node_options.hpp>
 #include <rclcpp/qos.hpp>
@@ -27,6 +28,9 @@ public:
 
         encoding_ = get_parameter("type").as_string();
         frame_id_ = get_parameter("frame_id").as_string();
+
+        output_width_ = static_cast<int>(get_parameter("output_width").as_int());
+        output_height_ = static_cast<int>(get_parameter("output_height").as_int());
 
         register_input(interface_name, image_);
 
@@ -68,6 +72,12 @@ private:
             }
 
             if (!image.empty()) {
+                if (output_width_ > 0 && output_height_ > 0) {
+                    cv::Mat resized;
+                    cv::resize(image, resized, cv::Size(output_width_, output_height_), 0, 0, cv::INTER_AREA);
+                    image = resized;
+                }
+
                 cv_bridge::CvImage image_msg;
                 image_msg.header.stamp = get_clock()->now();
                 image_msg.header.frame_id = frame_id_;
@@ -84,6 +94,8 @@ private:
 
     std::string encoding_;
     std::string frame_id_;
+    int output_width_ = 0;
+    int output_height_ = 0;
 
     std::chrono::duration<double> publish_period_{};
     std::thread publish_thread_;
