@@ -4,4 +4,5 @@
   <class type="rmcs_hero_lob::LobVisionCore" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_hero_lob::VideoRecorder" base_class_type="rmcs_executor::Component" />
   <class type="rmcs_hero_lob::ShootSignal" base_class_type="rmcs_executor::Component" />
+  <class type="rmcs_hero_lob::ImagePacketizer" base_class_type="rmcs_executor::Component" />
 </library>

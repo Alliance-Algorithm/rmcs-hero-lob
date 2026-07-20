@@ -63,8 +63,12 @@ struct TrajectoryWindowConfig {
 };
 
 struct CompressionConfig {
-    int output_width = 288;
-    int output_height = 216;
+    int background_output_width = 288;
+    int background_output_height = 216;
+    int track_output_width = 288;
+    int track_output_height = 216;
+    int exposure_output_width = 288;
+    int exposure_output_height = 216;
 };
 
 struct PipelineConfig {

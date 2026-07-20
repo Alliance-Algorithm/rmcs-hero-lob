@@ -1,6 +1,7 @@
 #include "rmcs_executor/component.hpp"
 #include "rmcs_hero_lob/configs.hpp"
 #include "rmcs_hero_lob/pipeline.hpp"
+#include "rmcs_hero_lob/sequence_utils.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -29,6 +30,10 @@ public:
         register_output("/hero_lob/image/shooting_background", latest_shooting_background_, cv::Mat());
         register_output("/hero_lob/image/shooting_track", latest_shooting_track_, cv::Mat());
         register_output("/hero_lob/image/shooting_exposure_image", latest_shooting_exposure_image_, cv::Mat());
+
+        register_output("/hero_lob/image/shooting_background_seq", latest_shooting_background_seq_, kUnsetSequence);
+        register_output("/hero_lob/image/shooting_track_seq", latest_shooting_track_seq_, kUnsetSequence);
+        register_output("/hero_lob/image/shooting_exposure_image_seq", latest_shooting_exposure_image_seq_, kUnsetSequence);
 
         config_.process_start_frame = static_cast<int>(get_parameter("process_start_frame").as_int());
         config_.process_end_frame = static_cast<int>(get_parameter("process_end_frame").as_int());
@@ -73,6 +78,9 @@ public:
                 *latest_shooting_track_ = output_track_;
             if (!output_exposure_.empty())
                 *latest_shooting_exposure_image_ = output_exposure_;
+            *latest_shooting_background_seq_ = seq_background_;
+            *latest_shooting_track_seq_ = seq_track_;
+            *latest_shooting_exposure_image_seq_ = seq_exposure_;
         }
     }
 
@@ -114,6 +122,15 @@ private:
                     if (!history_queue.empty()) {
                         pipeline_.SetReferenceFromHistory(history_queue, static_cast<int64_t>(frame_data.frame_id));
                         pipeline_.ResetTracker();
+                        ReferenceFrameResult ref = pipeline_.GetReferenceFrameSelector().GetReference();
+                        if (ref.has_reference) {
+                            cv::Mat background_compressed = pipeline_.CompressImage(ref.reference_frame.bgr);
+                            {
+                                std::lock_guard<std::mutex> lock(output_mutex_);
+                                output_background_ = background_compressed;
+                                seq_background_ = advance_sequence(seq_background_);
+                            }
+                        }
                         auto bg_elapsed =
                             std::chrono::duration<double>(std::chrono::steady_clock::now() - trigger_time_).count();
                         RCLCPP_INFO(
@@ -146,14 +163,7 @@ private:
                 f.bgr = frame_data.image;
                 cv::cvtColor(frame_data.image, f.hsv, cv::COLOR_BGR2HSV);
 
-                TrajectoryResult traj = pipeline_.ProcessFrame(f);
-
-                if (traj.valid) {
-                    cv::Mat track_display;
-                    traj.trajectory_layer.convertTo(track_display, CV_8UC3, 1.0);
-                    std::lock_guard<std::mutex> lock(output_mutex_);
-                    output_track_ = track_display;
-                }
+                pipeline_.ProcessFrame(f);
 
                 if (frame_counter >= config_.process_end_frame) {
                     state = State::SYNTHESIZING;
@@ -163,23 +173,38 @@ private:
             }
 
             case State::SYNTHESIZING: {
-                ReferenceFrameResult ref = pipeline_.GetReferenceFrameSelector().GetReference();
-                cv::Mat background_compressed;
-                if (ref.has_reference) {
-                    background_compressed = pipeline_.CompressImage(ref.reference_frame.bgr);
-                    std::lock_guard<std::mutex> lock(output_mutex_);
-                    output_background_ = background_compressed;
+                const TrajectoryResult& final_traj = pipeline_.GetLastTrajectory();
+                if (final_traj.valid) {
+                    cv::Mat track_display;
+                    final_traj.trajectory_layer.convertTo(track_display, CV_8UC3, 1.0);
+                    const auto& tcfg = config_.compression;
+                    if (tcfg.track_output_width > 0 && tcfg.track_output_height > 0) {
+                        cv::Mat resized;
+                        cv::resize(
+                            track_display, resized, cv::Size(tcfg.track_output_width, tcfg.track_output_height), 0, 0,
+                            cv::INTER_AREA);
+                        {
+                            std::lock_guard<std::mutex> lock(output_mutex_);
+                            output_track_ = resized;
+                            seq_track_ = advance_sequence(seq_track_);
+                        }
+                    } else {
+                        std::lock_guard<std::mutex> lock(output_mutex_);
+                        output_track_ = track_display;
+                        seq_track_ = advance_sequence(seq_track_);
+                    }
                 }
 
                 CompressionResult result = pipeline_.Finalize();
                 if (result.valid && !result.output_image.empty()) {
                     std::lock_guard<std::mutex> lock(output_mutex_);
                     output_exposure_ = result.output_image;
+                    seq_exposure_ = advance_sequence(seq_exposure_);
                 }
 
                 auto total_elapsed =
                     std::chrono::duration<double>(std::chrono::steady_clock::now() - trigger_time_).count();
-                size_t background_bytes = background_compressed.total() * background_compressed.elemSize();
+                size_t background_bytes = output_background_.total() * output_background_.elemSize();
                 size_t track_bytes = output_track_.total() * output_track_.elemSize();
                 size_t output_bytes = result.valid ? result.output_image.total() * result.output_image.elemSize() : 0;
                 RCLCPP_INFO(
@@ -187,7 +212,7 @@ private:
                     "output ready (%.3fs from trigger) | background: %dx%d %zubytes | track: %dx%d "
                     "%zubytes | "
                     "output: %dx%d %zubytes",
-                    total_elapsed, background_compressed.cols, background_compressed.rows, background_bytes,
+                    total_elapsed, output_background_.cols, output_background_.rows, background_bytes,
                     output_track_.cols, output_track_.rows, track_bytes, result.output_image.cols,
                     result.output_image.rows, output_bytes);
                 state = State::DONE;
@@ -211,6 +236,9 @@ private:
     OutputInterface<cv::Mat> latest_shooting_background_;
     OutputInterface<cv::Mat> latest_shooting_track_;
     OutputInterface<cv::Mat> latest_shooting_exposure_image_;
+    OutputInterface<int> latest_shooting_background_seq_;
+    OutputInterface<int> latest_shooting_track_seq_;
+    OutputInterface<int> latest_shooting_exposure_image_seq_;
 
     PipelineConfig config_;
     Pipeline pipeline_{config_};
@@ -231,6 +259,9 @@ private:
     cv::Mat output_background_;
     cv::Mat output_track_;
     cv::Mat output_exposure_;
+    int seq_background_ = kUnsetSequence;
+    int seq_track_ = kUnsetSequence;
+    int seq_exposure_ = kUnsetSequence;
 };
 
 } // namespace rmcs_hero_lob
