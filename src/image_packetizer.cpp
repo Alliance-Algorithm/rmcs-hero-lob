@@ -24,10 +24,12 @@ public:
     ImagePacketizer()
         : Node{get_component_name(), rclcpp::NodeOptions{}.automatically_declare_parameters_from_overrides(true)} {
 
-        std::string input_interface_name = get_parameter("interface_name").as_string();
-        std::string output_interface_name = input_interface_name + "packages";
-        std::string sequence_output_interface_name = input_interface_name + "package_seq";
-        std::string sequence_input_interface_name = input_interface_name + "seq";
+        std::string output_interface_name = get_parameter("interface_name").as_string();
+        std::string input_interface_name = output_interface_name;
+        get_parameter_or("input_interface_name", input_interface_name, input_interface_name);
+        std::string output_packets_interface_name = output_interface_name + "packages";
+        std::string sequence_output_interface_name = output_interface_name + "package_seq";
+        std::string sequence_input_interface_name = input_interface_name + "_seq";
         fec_data_per_group_ = static_cast<std::uint8_t>(get_parameter("fec_data_per_group").as_int());
         fec_fec_per_group_ = static_cast<std::uint8_t>(get_parameter("fec_fec_per_group").as_int());
         jpeg_quality_ = static_cast<int>(get_parameter("jpeg_quality").as_int());
@@ -39,7 +41,7 @@ public:
 
         register_input(input_interface_name, image_);
         register_input(sequence_input_interface_name, image_seq_input_);
-        register_output(output_interface_name, packets_, std::vector<std::array<std::uint8_t, kPacketSize>>{});
+        register_output(output_packets_interface_name, packets_, std::vector<std::array<std::uint8_t, kPacketSize>>{});
         register_output(sequence_output_interface_name, sequence_, kUnsetSequence);
     }
 
@@ -51,15 +53,17 @@ public:
         if (current_seq == last_processed_seq_)
             return;
         last_processed_seq_ = current_seq;
+        RCLCPP_INFO(get_logger(), "received image seq=%d, size=%dx%d", current_seq, image_->cols, image_->rows);
 
         std::vector<unsigned char> jpeg_bytes;
         std::vector<int> encode_params{cv::IMWRITE_JPEG_QUALITY, jpeg_quality_};
-        if (!cv::imencode(".jpg", *image_, jpeg_bytes, encode_params))
+        if (!cv::imencode(".jpg", *image_, jpeg_bytes, encode_params)) {
+            RCLCPP_WARN(get_logger(), "JPEG encode failed for seq=%d", current_seq);
             return;
+        }
 
-        auto raw_packets =
-            packetize_jpeg(
-                std::span<const std::uint8_t>{jpeg_bytes.data(), jpeg_bytes.size()}, image_seq_, message_type_);
+        auto raw_packets = packetize_jpeg(
+            std::span<const std::uint8_t>{jpeg_bytes.data(), jpeg_bytes.size()}, image_seq_, message_type_);
 
         const std::size_t group_count = (raw_packets.size() + fec_data_per_group_ - 1) / fec_data_per_group_;
         const std::size_t total_packet_count = raw_packets.size() + group_count * fec_fec_per_group_;
@@ -74,6 +78,9 @@ public:
 
         *packets_ = std::move(output);
         *sequence_ = static_cast<int>(image_seq_);
+        RCLCPP_INFO(
+            get_logger(), "published %zu packets, packet_seq=%d, jpeg=%zubytes", output.size(), image_seq_,
+            jpeg_bytes.size());
         ++image_seq_;
     }
 

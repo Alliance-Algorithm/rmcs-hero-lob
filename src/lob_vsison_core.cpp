@@ -72,12 +72,21 @@ public:
 
         {
             std::lock_guard<std::mutex> lock(output_mutex_);
-            if (!output_background_.empty())
+            if (!output_background_.empty() && seq_background_ != last_published_seq_background_) {
                 *latest_shooting_background_ = output_background_;
-            if (!output_track_.empty())
+                last_published_seq_background_ = seq_background_;
+                RCLCPP_INFO(get_logger(), "published background seq=%d", seq_background_);
+            }
+            if (!output_track_.empty() && seq_track_ != last_published_seq_track_) {
                 *latest_shooting_track_ = output_track_;
-            if (!output_exposure_.empty())
+                last_published_seq_track_ = seq_track_;
+                RCLCPP_INFO(get_logger(), "published track seq=%d", seq_track_);
+            }
+            if (!output_exposure_.empty() && seq_exposure_ != last_published_seq_exposure_) {
                 *latest_shooting_exposure_image_ = output_exposure_;
+                last_published_seq_exposure_ = seq_exposure_;
+                RCLCPP_INFO(get_logger(), "published exposure seq=%d", seq_exposure_);
+            }
             *latest_shooting_background_seq_ = seq_background_;
             *latest_shooting_track_seq_ = seq_track_;
             *latest_shooting_exposure_image_seq_ = seq_exposure_;
@@ -187,11 +196,13 @@ private:
                             std::lock_guard<std::mutex> lock(output_mutex_);
                             output_track_ = resized;
                             seq_track_ = advance_sequence(seq_track_);
+                            RCLCPP_INFO(get_logger(), "track ready seq=%d", seq_track_);
                         }
                     } else {
                         std::lock_guard<std::mutex> lock(output_mutex_);
                         output_track_ = track_display;
                         seq_track_ = advance_sequence(seq_track_);
+                        RCLCPP_INFO(get_logger(), "track ready seq=%d", seq_track_);
                     }
                 }
 
@@ -200,6 +211,7 @@ private:
                     std::lock_guard<std::mutex> lock(output_mutex_);
                     output_exposure_ = result.output_image;
                     seq_exposure_ = advance_sequence(seq_exposure_);
+                    RCLCPP_INFO(get_logger(), "exposure ready seq=%d", seq_exposure_);
                 }
 
                 auto total_elapsed =
@@ -262,6 +274,9 @@ private:
     int seq_background_ = kUnsetSequence;
     int seq_track_ = kUnsetSequence;
     int seq_exposure_ = kUnsetSequence;
+    int last_published_seq_background_ = kUnsetSequence;
+    int last_published_seq_track_ = kUnsetSequence;
+    int last_published_seq_exposure_ = kUnsetSequence;
 };
 
 } // namespace rmcs_hero_lob
