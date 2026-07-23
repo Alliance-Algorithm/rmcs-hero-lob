@@ -25,9 +25,20 @@ public:
     CameraCapture()
         : Node{get_component_name(), rclcpp::NodeOptions{}.automatically_declare_parameters_from_overrides(true)} {
 
+        config_.camera_name = get_parameter_or<std::string>("camera_name", "");
         config_.exposure_us = static_cast<float>(get_parameter("exposure_us").as_double());
         config_.framerate = static_cast<float>(get_parameter("framerate").as_double());
         config_.invert_image = get_parameter("invert_image").as_bool();
+
+        RCLCPP_INFO(get_logger(), "Configured camera_name: '%s'", config_.camera_name.c_str());
+        if (auto names = hikcamera::list_camera_names()) {
+            RCLCPP_INFO(get_logger(), "Discovered %zu Hik camera(s)", names->size());
+            for (std::size_t index = 0; index < names->size(); ++index) {
+                RCLCPP_INFO(get_logger(), "  [%zu] UserDefinedName: '%s'", index, (*names)[index].c_str());
+            }
+        } else {
+            RCLCPP_WARN(get_logger(), "Failed to enumerate Hik cameras: %s", names.error().c_str());
+        }
 
         camera_.configure(config_);
 
@@ -45,7 +56,7 @@ public:
     void before_updating() override {
         stop_flag_.store(false, std::memory_order_relaxed);
         capture_thread_ = std::thread(&CameraCapture::capture_thread_func, this);
-        // RCLCPP_INFO(get_logger(), "Camera capture thread started (target ~%.0f Hz)", config_.framerate);
+        RCLCPP_INFO(get_logger(), "Camera capture thread started (target ~%.0f Hz)", config_.framerate);
     }
 
     void update() override {
@@ -65,25 +76,46 @@ public:
 
 private:
     void capture_thread_func() {
-        auto result = camera_.connect();
-        if (!result) {
-            RCLCPP_ERROR(get_logger(), "Failed to connect camera: %s", result.error().c_str());
-            return;
-        }
-
-        RCLCPP_INFO(get_logger(), "Camera connected");
         uint64_t frame_id = 0;
-
         using clock = std::chrono::steady_clock;
-        auto fps_last_time = clock::now();
-        uint64_t fps_frame_count = 0;
+        auto status_last_time = clock::now();
+        uint64_t status_frame_count = 0;
+        bool connected = false;
 
         while (!stop_flag_.load(std::memory_order_relaxed)) {
-            auto image = camera_.read_image();
+            if (!connected) {
+                auto result = camera_.connect();
+                if (!result) {
+                    RCLCPP_ERROR(
+                        get_logger(),
+                        "Failed to connect camera: %s | camera_name='%s' exposure_us=%.1f "
+                        "framerate=%.1f invert_image=%s discovered=[%s]",
+                        result.error().c_str(), config_.camera_name.c_str(), config_.exposure_us,
+                        config_.framerate, config_.invert_image ? "true" : "false",
+                        format_discovered_camera_names().c_str());
+                    sleep_for_interruptible(std::chrono::seconds(5));
+                    continue;
+                }
 
+                connected = true;
+                status_last_time = clock::now();
+                status_frame_count = 0;
+                RCLCPP_INFO(
+                    get_logger(),
+                    "Camera connected | camera_name='%s' exposure_us=%.1f framerate=%.1f",
+                    config_.camera_name.c_str(), config_.exposure_us, config_.framerate);
+                continue;
+            }
+
+            auto image = camera_.read_image();
             if (!image) {
-                RCLCPP_WARN_THROTTLE(
-                    get_logger(), *get_clock(), 1000, "Failed to read image: %s", image.error().c_str());
+                RCLCPP_WARN(
+                    get_logger(),
+                    "Failed to read image: %s | camera_name='%s' (will reconnect in 5s)",
+                    image.error().c_str(), config_.camera_name.c_str());
+                std::ignore = camera_.disconnect();
+                connected = false;
+                sleep_for_interruptible(std::chrono::seconds(5));
                 continue;
             }
 
@@ -95,24 +127,63 @@ private:
                 frame_available_ = true;
             }
 
-            ++fps_frame_count;
+            ++status_frame_count;
 
             auto now = clock::now();
-            auto elapsed = std::chrono::duration<double>(now - fps_last_time).count();
-            if (elapsed >= 1.0) {
-                double actual_fps = static_cast<double>(fps_frame_count) / elapsed;
-                // RCLCPP_INFO(get_logger(), "Camera FPS: %.1f Hz", actual_fps);
-                fps_last_time = now;
-                fps_frame_count = 0;
+            auto elapsed = std::chrono::duration<double>(now - status_last_time).count();
+            if (elapsed >= 5.0) {
+                const auto actual_fps =
+                    elapsed > 0.0 ? static_cast<double>(status_frame_count) / elapsed : 0.0;
+                RCLCPP_INFO(get_logger(), "connect frame:%.0f", actual_fps);
+                status_last_time = now;
+                status_frame_count = 0;
             }
         }
 
-        auto disconnect_result = camera_.disconnect();
-        if (!disconnect_result) {
-            RCLCPP_WARN(get_logger(), "Failed to disconnect camera: %s", disconnect_result.error().c_str());
+        if (connected) {
+            auto disconnect_result = camera_.disconnect();
+            if (!disconnect_result) {
+                RCLCPP_WARN(
+                    get_logger(), "Failed to disconnect camera: %s",
+                    disconnect_result.error().c_str());
+            }
         }
 
-        RCLCPP_INFO(get_logger(), "Camera capture thread stopped (%" PRIu64 " frames captured)", frame_id);
+        RCLCPP_INFO(
+            get_logger(), "Camera capture thread stopped (%" PRIu64 " frames captured)", frame_id);
+    }
+
+    auto format_discovered_camera_names() const -> std::string {
+        auto names = hikcamera::list_camera_names();
+        if (!names) {
+            return std::string{"enum_failed: "} + names.error();
+        }
+
+        if (names->empty()) {
+            return "none";
+        }
+
+        std::string joined;
+        for (std::size_t index = 0; index < names->size(); ++index) {
+            if (index != 0) {
+                joined += ", ";
+            }
+            joined += '\'';
+            joined += (*names)[index];
+            joined += '\'';
+        }
+        return joined;
+    }
+
+    void sleep_for_interruptible(std::chrono::steady_clock::duration duration) {
+        using clock = std::chrono::steady_clock;
+        const auto deadline = clock::now() + duration;
+        while (!stop_flag_.load(std::memory_order_relaxed) && clock::now() < deadline) {
+            const auto remaining = deadline - clock::now();
+            const auto slice = std::min(
+                remaining, std::chrono::duration_cast<clock::duration>(std::chrono::milliseconds(100)));
+            std::this_thread::sleep_for(slice);
+        }
     }
 
     hikcamera::Config config_;

@@ -2,6 +2,8 @@
 
 #include "rmcs_hero_lob/configs.hpp"
 
+#include <cstddef>
+
 #include <opencv2/calib3d.hpp>
 #include <opencv2/features2d.hpp>
 #include <opencv2/imgproc.hpp>
@@ -19,12 +21,16 @@ public:
         result.frame_index = frame.frame_index;
         result.timestamp_seconds = frame.timestamp_seconds;
 
-        if (!reference.has_reference || frame.bgr.empty()) {
+        if (!reference.has_reference || reference.reference_frame.bgr.empty() || frame.bgr.empty()) {
             result.valid = false;
             return result;
         }
 
-        const float scale = config_.image_registrator_orb.downscale_factor;
+        const cv::Size reference_size = reference.reference_frame.bgr.size();
+        cv::Mat current_bgr = MakeReferenceSizedFrame(frame.bgr, reference_size);
+        const float scale = config_.image_registrator_orb.downscale_factor > 0.0F
+            ? config_.image_registrator_orb.downscale_factor
+            : 1.0F;
         const int ref_idx = reference.reference_frame.frame_index;
 
         bool ref_changed = (ref_idx != cached_ref_frame_index_);
@@ -61,7 +67,7 @@ public:
         }
 
         cv::Mat cur_gray;
-        cv::cvtColor(frame.bgr, cur_gray, cv::COLOR_BGR2GRAY);
+        cv::cvtColor(current_bgr, cur_gray, cv::COLOR_BGR2GRAY);
 
         std::vector<cv::KeyPoint> cur_kp;
         cv::Mat cur_desc;
@@ -82,7 +88,7 @@ public:
         if (ref_desc_.empty() || cur_desc.empty() || ref_kp_.size() < 4 || cur_kp.size() < 4) {
             result.valid = true;
             result.transform = cv::Matx23f(1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F);
-            result.registered_bgr = frame.bgr.clone();
+            result.registered_bgr = current_bgr.clone();
             cv::cvtColor(result.registered_bgr, result.registered_hsv, cv::COLOR_BGR2HSV);
             return result;
         }
@@ -102,7 +108,7 @@ public:
         if (static_cast<int>(good_matches.size()) < config_.image_registrator_orb.min_matches) {
             result.valid = true;
             result.transform = cv::Matx23f(1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F);
-            result.registered_bgr = frame.bgr.clone();
+            result.registered_bgr = current_bgr.clone();
             cv::cvtColor(result.registered_bgr, result.registered_hsv, cv::COLOR_BGR2HSV);
             return result;
         }
@@ -121,26 +127,19 @@ public:
         if (H.empty()) {
             result.valid = true;
             result.transform = cv::Matx23f(1.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F);
-            result.registered_bgr = frame.bgr.clone();
+            result.registered_bgr = current_bgr.clone();
             cv::cvtColor(result.registered_bgr, result.registered_hsv, cv::COLOR_BGR2HSV);
             return result;
         }
 
-        const float out_scale = 0.5F;
-        cv::Mat H_scaled = H.clone();
-        H_scaled.row(0) *= out_scale;
-        H_scaled.row(1) *= out_scale;
-        cv::Size out_size(
-            static_cast<int>(reference.reference_frame.bgr.cols * out_scale),
-            static_cast<int>(reference.reference_frame.bgr.rows * out_scale));
         cv::Mat registered_bgr;
-        cv::warpPerspective(frame.bgr, registered_bgr, H_scaled, out_size);
+        cv::warpPerspective(current_bgr, registered_bgr, H, reference_size);
 
         result.valid = true;
         result.transform = cv::Matx23f(
-            static_cast<float>(H_scaled.at<double>(0, 0)), static_cast<float>(H_scaled.at<double>(0, 1)),
-            static_cast<float>(H_scaled.at<double>(0, 2)), static_cast<float>(H_scaled.at<double>(1, 0)),
-            static_cast<float>(H_scaled.at<double>(1, 1)), static_cast<float>(H_scaled.at<double>(1, 2)));
+            static_cast<float>(H.at<double>(0, 0)), static_cast<float>(H.at<double>(0, 1)),
+            static_cast<float>(H.at<double>(0, 2)), static_cast<float>(H.at<double>(1, 0)),
+            static_cast<float>(H.at<double>(1, 1)), static_cast<float>(H.at<double>(1, 2)));
         result.registered_bgr = registered_bgr;
         cv::cvtColor(registered_bgr, result.registered_hsv, cv::COLOR_BGR2HSV);
 
@@ -148,6 +147,19 @@ public:
     }
 
 private:
+    static cv::Mat MakeReferenceSizedFrame(const cv::Mat& image, const cv::Size& reference_size) {
+        if (image.empty() || reference_size.empty())
+            return {};
+        if (image.size() == reference_size)
+            return image.clone();
+
+        cv::Mat resized;
+        const int interpolation = image.total() > static_cast<std::size_t>(reference_size.area()) ? cv::INTER_AREA
+                                                                                                  : cv::INTER_LINEAR;
+        cv::resize(image, resized, reference_size, 0, 0, interpolation);
+        return resized;
+    }
+
     PipelineConfig config_;
     cv::Ptr<cv::ORB> orb_;
     int cached_ref_frame_index_ = -1;

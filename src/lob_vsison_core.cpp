@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <opencv2/core/mat.hpp>
+#include <opencv2/imgproc.hpp>
 #include <rclcpp/logging.hpp>
 #include <rclcpp/node.hpp>
 
@@ -39,6 +40,8 @@ public:
         config_.process_end_frame = static_cast<int>(get_parameter("process_end_frame").as_int());
         config_.history_queue_max_size = static_cast<int>(get_parameter("history_queue_max_size").as_int());
         config_.history_sample_interval = static_cast<int>(get_parameter("history_sample_interval").as_int());
+        get_parameter_or("processing_width", config_.processing_width, config_.processing_width);
+        get_parameter_or("processing_height", config_.processing_height, config_.processing_height);
     }
 
     ~LobVisionCore() override {
@@ -117,9 +120,13 @@ private:
                 frame_queue_.pop_front();
             }
 
+            cv::Mat processing_image = MakeProcessingImage(frame_data.image);
+            if (processing_image.empty())
+                continue;
+
             ++history_sample_counter;
             if (history_sample_counter % config_.history_sample_interval == 0) {
-                history_queue.push_back(frame_data.image.clone());
+                history_queue.push_back(processing_image.clone());
                 if (static_cast<int>(history_queue.size()) > config_.history_queue_max_size)
                     history_queue.erase(history_queue.begin());
             }
@@ -169,8 +176,8 @@ private:
                 FrameData f;
                 f.frame_index = static_cast<int64_t>(frame_data.frame_id);
                 f.timestamp_seconds = static_cast<double>(frame_data.frame_id) / 120.0;
-                f.bgr = frame_data.image;
-                cv::cvtColor(frame_data.image, f.hsv, cv::COLOR_BGR2HSV);
+                f.bgr = processing_image;
+                cv::cvtColor(processing_image, f.hsv, cv::COLOR_BGR2HSV);
 
                 pipeline_.ProcessFrame(f);
 
@@ -240,6 +247,22 @@ private:
         }
 
         RCLCPP_INFO(get_logger(), "worker thread stopped");
+    }
+
+    cv::Mat MakeProcessingImage(const cv::Mat& image) const {
+        if (image.empty())
+            return {};
+
+        if (config_.processing_width <= 0 || config_.processing_height <= 0)
+            return image.clone();
+
+        cv::Size processing_size(config_.processing_width, config_.processing_height);
+        if (image.size() == processing_size)
+            return image.clone();
+
+        cv::Mat resized;
+        cv::resize(image, resized, processing_size, 0, 0, cv::INTER_AREA);
+        return resized;
     }
 
     InputInterface<bool> bullet_fired_;

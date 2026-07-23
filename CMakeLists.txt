@@ -117,6 +117,9 @@ if(BUILD_TESTING)
   if(ament_cmake_gtest_FOUND)
     ament_add_gtest(packetizer_test test/packetizer_test.cpp)
     target_link_libraries(packetizer_test ${PROJECT_NAME})
+
+    ament_add_gtest(pipeline_size_test test/pipeline_size_test.cpp)
+    target_link_libraries(pipeline_size_test ${PROJECT_NAME})
   endif()
 endif()
 
