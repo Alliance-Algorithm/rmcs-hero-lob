@@ -41,7 +41,7 @@ struct ImageRegistratorOrbConfig {
     float match_ratio_threshold = 0.75F;
     double ransac_reproj_threshold = 3.0;
     int min_matches = 10;
-    float downscale_factor = 0.5F;
+    float downscale_factor = 1.0F;
     int exclude_top_left_width = 100;
     int exclude_top_left_height = 100;
 };
@@ -63,8 +63,12 @@ struct TrajectoryWindowConfig {
 };
 
 struct CompressionConfig {
-    int output_width = 288;
-    int output_height = 216;
+    int background_output_width = 288;
+    int background_output_height = 216;
+    int track_output_width = 288;
+    int track_output_height = 216;
+    int exposure_output_width = 288;
+    int exposure_output_height = 216;
 };
 
 struct PipelineConfig {
@@ -74,6 +78,8 @@ struct PipelineConfig {
     MotionForegroundConfig motion_foreground = {};
     TrajectoryWindowConfig trajectory_window = {};
     CompressionConfig compression = {};
+    int processing_width = 720;
+    int processing_height = 540;
     int process_start_frame = 60;
     int process_end_frame = 300;
     int history_queue_max_size = 15;

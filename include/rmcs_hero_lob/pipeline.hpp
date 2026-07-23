@@ -89,9 +89,12 @@ public:
     cv::Mat CompressImage(const cv::Mat& image) const {
         if (image.empty())
             return {};
+        const auto& bg = config_.compression;
+        if (bg.background_output_width <= 0 || bg.background_output_height <= 0)
+            return image;
         cv::Mat result;
         cv::resize(
-            image, result, cv::Size(config_.compression.output_width, config_.compression.output_height), 0, 0,
+            image, result, cv::Size(bg.background_output_width, bg.background_output_height), 0, 0,
             cv::INTER_AREA);
         return result;
     }
@@ -99,6 +102,8 @@ public:
     ReferenceFrameSelector& GetReferenceFrameSelector() { return reference_frame_selector_; }
 
     TrackerProcessorFast& GetTracker() { return tracker_processor_fast_; }
+
+    const TrajectoryResult& GetLastTrajectory() const { return last_trajectory_; }
 
 private:
     PipelineConfig config_;

@@ -18,9 +18,10 @@ public:
         }
 
         const auto& cfg = config_.compression;
-        if (cfg.output_width > 0 && cfg.output_height > 0) {
+        if (cfg.exposure_output_width > 0 && cfg.exposure_output_height > 0) {
             cv::resize(
-                synthesis.output_image, result.output_image, cv::Size(cfg.output_width, cfg.output_height), 0, 0,
+                synthesis.output_image, result.output_image,
+                cv::Size(cfg.exposure_output_width, cfg.exposure_output_height), 0, 0,
                 cv::INTER_AREA);
         } else {
             result.output_image = synthesis.output_image;
